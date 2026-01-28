@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Load environment variables from .env file
 load_dotenv()
 
 
@@ -22,11 +21,6 @@ def fetch_html(url: str) -> str:
 
 
 def parse_last_updated(html: str) -> str | None:
-    """
-    Extract the 'Last updated ...' timestamp string if present.
-
-    Stored as a raw string because the site format is not guaranteed.
-    """
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(" ", strip=True)
     m = re.search(r"\bLast updated\b\s+(.+?)(?:\s+Refresh\b|$)", text, re.IGNORECASE)
@@ -86,10 +80,6 @@ def send_to_supabase(
     last_updated: str | None,
     statuses: dict[str, int],
 ) -> int:
-    """
-    Insert statuses into Supabase via REST API.
-    Returns number of rows inserted, or 0 if Supabase is not configured or insert fails.
-    """
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = os.getenv("SUPABASE_KEY")
     
