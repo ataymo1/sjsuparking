@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react"
 
+import { AreaChart as ParkingAreaChart } from "@/components/AreaChart"
 import { GarageCard } from "@/components/GarageCard"
 import { HistoryTable } from "@/components/HistoryTable"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -22,7 +23,7 @@ function tabValue(garage: string) {
 }
 
 export function Dashboard() {
-  const { isLoading, error, refreshedAt, latestFetchedAt, latestByGarage, historyByGarage, refetch } =
+  const { isLoading, error, refreshedAt, latestFetchedAt, latestByGarage, historyByGarage, refetch, rows } =
     useGarageStatus({ refreshIntervalMs: 60_000 })
 
   return (
@@ -76,6 +77,21 @@ export function Dashboard() {
             <GarageCard key={garage} garage={garage} row={latestByGarage.get(garage) ?? null} />
           ))}
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Daily Status Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="flex h-64 items-center justify-center text-muted-foreground">
+                Loading chart data...
+              </div>
+            ) : (
+              <ParkingAreaChart rows={rows} />
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
