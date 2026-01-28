@@ -1,14 +1,18 @@
 import argparse
 import datetime as dt
+import os
 import re
-import sqlite3
 import sys
 import urllib3
-from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def fetch_html(url: str) -> str:
@@ -75,64 +79,63 @@ def print_statuses(statuses: dict[str, int]):
             print(f"{garage_name}: {statuses[garage_name]}")
 
 
-def default_db_path() -> Path:
-    return Path(__file__).resolve().with_name("sjsu_parking.db")
-
-
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS garage_status (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fetched_at TEXT NOT NULL,
-            last_updated TEXT,
-            garage TEXT NOT NULL,
-            status INTEGER NOT NULL,
-            source_url TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_garage_status_garage ON garage_status(garage)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_garage_status_fetched_at ON garage_status(fetched_at)")
-    conn.commit()
-
-
-def store_statuses(
+def send_to_supabase(
     *,
-    db_path: Path,
     source_url: str,
     fetched_at: str,
     last_updated: str | None,
     statuses: dict[str, int],
 ) -> int:
-    rows = [(fetched_at, last_updated, garage, status, source_url) for garage, status in statuses.items()]
+    """
+    Insert statuses into Supabase via REST API.
+    Returns number of rows inserted, or 0 if Supabase is not configured or insert fails.
+    """
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if not supabase_url or not supabase_key:
+        print("Warning: SUPABASE_URL or SUPABASE_KEY not set; skipping Supabase insert.", file=sys.stderr)
+        return 0
+
+    endpoint = f"{supabase_url}/rest/v1/garage_status"
+
+    rows = [
+        {
+            "fetched_at": fetched_at,
+            "last_updated": last_updated,
+            "garage": garage,
+            "status": status,
+            "source_url": source_url,
+        }
+        for garage, status in statuses.items()
+    ]
     if not rows:
         return 0
 
-    with sqlite3.connect(db_path) as conn:
-        init_db(conn)
-        conn.executemany(
-            """
-            INSERT INTO garage_status (fetched_at, last_updated, garage, status, source_url)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        conn.commit()
-    return len(rows)
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+    try:
+        resp = requests.post(endpoint, headers=headers, json=rows, timeout=10)
+        resp.raise_for_status()
+        return len(rows)
+    except requests.RequestException as e:
+        print(f"Error inserting into Supabase: {e}", file=sys.stderr)
+        if hasattr(e.response, 'text'):
+            print(f"  Response: {e.response.text}", file=sys.stderr)
+        return 0
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Scrape SJSU garage status and store in SQLite.")
-    parser.add_argument(
-        "--db",
-        default=str(default_db_path()),
-        help="Path to SQLite DB file (default: ./sjsu_parking.db next to this script).",
-    )
+    parser = argparse.ArgumentParser(description="Scrape SJSU garage status and store in Supabase.")
     parser.add_argument(
         "--no-print",
         action="store_true",
-        help="Do not print statuses; only store them in the DB.",
+        help="Do not print statuses; only store them in Supabase.",
     )
     args = parser.parse_args()
 
@@ -144,8 +147,7 @@ def main():
         statuses = parse_statuses(html)
         fetched_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
-        inserted = store_statuses(
-            db_path=Path(args.db),
+        inserted = send_to_supabase(
             source_url=url,
             fetched_at=fetched_at,
             last_updated=last_updated,
@@ -154,6 +156,7 @@ def main():
 
         if not args.no_print:
             print_statuses(statuses)
+        
         if inserted == 0:
             print("No statuses parsed; nothing stored.", file=sys.stderr)
     except requests.RequestException as e:
